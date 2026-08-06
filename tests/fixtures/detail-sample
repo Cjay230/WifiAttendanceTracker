@@ -1,0 +1,18 @@
+Thu Aug  6 11:26:59 2026
+	User-Name = "rita"
+	Acct-Status-Type = Start
+	Acct-Session-Id = "session001"
+	Calling-Station-Id = "00:11:22:33:44:55"
+	Called-Station-Id = "AP-Floor3"
+	NAS-IP-Address = 127.0.0.1
+	Timestamp = 1786004819
+
+Thu Aug  6 12:26:59 2026
+	User-Name = "rita"
+	Acct-Status-Type = Stop
+	Acct-Session-Id = "session001"
+	Calling-Station-Id = "00:11:22:33:44:55"
+	Called-Station-Id = "AP-Floor3"
+	Acct-Session-Time = 3600
+	Timestamp = 1786008419
+
