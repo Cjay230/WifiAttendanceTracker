@@ -13,8 +13,11 @@ See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design.
 
 ## Status
 
-**Phase 0 — Foundation.** Standing up FreeRADIUS locally to produce real RADIUS
-accounting records.
+**Phase 2 — Presence Engine (done).** SessionEvents flow through a state machine
+(`ABSENT`/`PRESENT`/`IDLE`/`LEFT`) that handles missing STOPs via timeout, interim
+heartbeats, and reconnect grace. Built on Phase 0 (FreeRADIUS producing real RADIUS
+accounting records) and Phase 1 (`FreeRADIUSSource` parsing those records into
+SessionEvents).
 
 ## Structure
 
@@ -34,7 +37,7 @@ scripts/        # dev/setup helpers
 ## Build order
 
 FreeRADIUS-first, but designed vendor-agnostic. See the Phasing section of the
-architecture doc. Current phase: **0**.
+architecture doc. Current phase: **2**.
 
 ## Setup
 

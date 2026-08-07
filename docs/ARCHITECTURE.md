@@ -170,7 +170,7 @@ narrower and concrete first, so we never design against imaginary APIs.
   second source with zero changes downstream. This is the moment "vendor-agnostic" is real.
 - **Phase 6 — Security, multi-tenancy, deployability.** Make it a product.
 
-**Current phase: 0.**
+**Current phase: 2 (done).**
 
 ---
 
