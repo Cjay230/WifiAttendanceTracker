@@ -42,6 +42,11 @@ python scripts/demo_freeradius.py <path-to-detail-file>
 # (typically run inside WSL against a real FreeRADIUS accounting file, hence sudo)
 sudo PYTHONPATH=src python3 scripts/demo_presence.py \
     /var/log/freeradius/radacct/127.0.0.1/detail-<date>
+
+# generate synthetic FreeRADIUS accounting data for scale-testing (writes under
+# data/, which is gitignored), then run it through the same pipeline and print stats
+python scripts/generate_sessions.py --out data/generated.detail --users 200
+python scripts/scale_test.py data/generated.detail
 ```
 
 There is no lint/format tooling configured in `pyproject.toml` yet.
@@ -71,9 +76,15 @@ state machine keyed by `(user_id, location_id)`, fed one `SessionEvent` at a tim
 `process()`. Key design points, since they're easy to get wrong when modifying:
 - Three timeouts drive transitions: `idle_timeout_ms` (quiet → `IDLE`), `left_timeout_ms`
   (quiet → `LEFT`, the safety net for a STOP that never arrives — e.g. a dead phone),
-  `reconnect_grace_ms` (declared but the actual grace behavior is just: a new START while
-  a visit is still active in `_active` extends the same visit rather than starting a new
-  one — visits only leave `_active` on an explicit STOP or a `left_timeout_ms` expiry).
+  `reconnect_grace_ms` (a START within this window of a matching STOP reopens that same
+  visit via `_reopen_if_within_grace` instead of starting a new one — a STOP closes a
+  visit immediately, so this is what actually merges a quick disconnect/reconnect; a
+  visit with no STOP at all just stays in `_active` and gets refreshed by any later
+  START/UPDATE up until `left_timeout_ms`, which is a different path through the same
+  "one visit, not two" outcome).
+- `PresenceRecord.ended_reason` (`"stop"` | `"timeout"` | `None`) records which path closed
+  a visit — `check_out`/`last_seen` alone can't tell them apart, since both land on the
+  same value either way. Useful for stats (see `scripts/scale_test.py`).
 - On each `process(event)`, the incoming event's own visit is updated *first*, and only
   *other* visits are checked for staleness against that event's timestamp
   (`_expire_stale(..., skip=key)`). This ordering matters: a legitimately late STOP on a

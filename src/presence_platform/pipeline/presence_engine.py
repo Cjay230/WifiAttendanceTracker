@@ -47,6 +47,9 @@ class PresenceRecord:
     state: PresenceState
     check_out: int | None = None  # epoch ms when LEFT (None if still present)
     source: str = ""
+    # WHY: check_out/last_seen alone can't tell a clean STOP from a timed-out visit (both
+    # land on the same value). Callers doing stats (e.g. scale-test reporting) need this.
+    ended_reason: str | None = None  # "stop" | "timeout" | None (still open)
 
     @property
     def duration_ms(self) -> int:
@@ -76,6 +79,8 @@ class PresenceEngine:
     _active: dict[tuple[str, str], PresenceRecord] = field(default_factory=dict)
     # finished visits (ended by STOP or timeout)
     _completed: list[PresenceRecord] = field(default_factory=list)
+    # most recent STOPped record per key, kept only as a reconnect-grace candidate
+    _recently_stopped: dict[tuple[str, str], PresenceRecord] = field(default_factory=dict)
 
     def process(self, event: SessionEvent) -> None:
         """Feed one event into the state machine.
@@ -97,11 +102,13 @@ class PresenceEngine:
         self._expire_stale(now=event.timestamp, skip=key)
 
     def _on_seen(self, key: tuple[str, str], event: SessionEvent) -> None:
-        """START or UPDATE: user is here. Open a visit or refresh the existing one."""
+        """START or UPDATE: user is here. Open a visit, reopen a recent one, or refresh."""
         record = self._active.get(key)
         if record is None:
-            # new visit
-            self._active[key] = PresenceRecord(
+            record = self._reopen_if_within_grace(key, event.timestamp)
+        if record is None:
+            # genuinely new visit
+            record = PresenceRecord(
                 user_id=event.user_id,
                 location_id=event.location_id,
                 check_in=event.timestamp,
@@ -109,10 +116,34 @@ class PresenceEngine:
                 state=PresenceState.PRESENT,
                 source=event.source,
             )
+            self._active[key] = record
         else:
-            # existing visit: refresh, confirm present
+            # existing (or reopened) visit: refresh, confirm present
             record.last_seen = event.timestamp
             record.state = PresenceState.PRESENT
+
+    def _reopen_if_within_grace(self, key: tuple[str, str], now: int) -> PresenceRecord | None:
+        """WHY: a STOP closes a visit immediately, but real devices reconnect quickly
+        (sleep/wake, a brief signal drop) without that meaning a new visit. If a START
+        arrives within reconnect_grace_ms of that STOP, treat it as the same visit
+        instead of opening a new one.
+        """
+        stopped = self._recently_stopped.pop(key, None)
+        if stopped is None:
+            return None
+        if now - stopped.check_out > self.reconnect_grace_ms:
+            return None  # too late; it stays closed, a genuinely new visit follows
+
+        # reopen: undo the STOP, drop it from completed, put it back in _active
+        for i, r in enumerate(self._completed):
+            if r is stopped:
+                del self._completed[i]
+                break
+        stopped.check_out = None
+        stopped.ended_reason = None
+        stopped.state = PresenceState.PRESENT
+        self._active[key] = stopped
+        return stopped
 
     def _on_stop(self, key: tuple[str, str], event: SessionEvent) -> None:
         """STOP: user left cleanly. Close the visit."""
@@ -122,7 +153,9 @@ class PresenceEngine:
         record.last_seen = event.timestamp
         record.check_out = event.timestamp
         record.state = PresenceState.LEFT
+        record.ended_reason = "stop"
         self._completed.append(record)
+        self._recently_stopped[key] = record  # candidate for reconnect-grace merge
 
     def _expire_stale(self, now: int, skip: tuple[str, str] | None = None) -> None:
         """Apply timeouts: quiet visits go IDLE, then LEFT.
@@ -139,6 +172,7 @@ class PresenceEngine:
                 # assume left (missing STOP) — check_out is the last time we actually saw them
                 record.check_out = record.last_seen
                 record.state = PresenceState.LEFT
+                record.ended_reason = "timeout"
                 self._completed.append(record)
                 del self._active[key]
             elif quiet_for >= self.idle_timeout_ms:
